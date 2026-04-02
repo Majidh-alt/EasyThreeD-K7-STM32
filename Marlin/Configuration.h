@@ -2576,7 +2576,7 @@
 //
 // Note: Usually sold with a white PCB.
 //
-//#define REPRAP_DISCOUNT_SMART_CONTROLLER
+#define REPRAP_DISCOUNT_SMART_CONTROLLER
 
 //
 // GT2560 (YHCB2004) LCD Display
@@ -2841,7 +2841,7 @@
 // This is RAMPS-compatible using a single 10-pin connector.
 // (For CR-10 owners who want to replace the Melzi Creality board but retain the display)
 //
-#define CR10_STOCKDISPLAY
+//#define CR10_STOCKDISPLAY
 
 //
 // Ender-2 OEM display, a variant of the MKS_MINI_12864
@@ -3204,7 +3204,7 @@
 // EasyThreeD ET-4000+ with button input and status LED
 //
 //#define EASYTHREED_UI
-#define EASYTHREED_K7_ET4000PLUS // Mainboard model for ET4000+ based K7
+//#define EASYTHREED_K7_ET4000PLUS // Mainboard model for ET4000+ based K7
 //#define EASYTHREED_K9_ET4000PLUS // Mainboard model for ET4000+ based K9
 
 //=============================================================================
