@@ -1,0 +1,29 @@
+name: Build Marlin K2 Firmware
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build Firmware
+        run: platformio run -e mks_robin_lite_maple
+
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: K2-firmware
+          path: .pio/build/mks_robin_lite_maple/mksLite.bin
