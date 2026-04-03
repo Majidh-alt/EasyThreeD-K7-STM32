@@ -123,7 +123,7 @@
   #if ANY(MKS_MINI_12864, MKS_12864OLED, MKS_12864OLED_SSD1306, IS_RRD_SC)
 
     #define LCD_BACKLIGHT_PIN               -1
-    #define LCD_RESET_PIN                   -1
+    #define LCD_RESET_PIN                   PA11
     #define DOGLCD_A0                EXP3_06_PIN
     #define DOGLCD_CS                EXP3_08_PIN
     #define DOGLCD_SCK                      PB13
