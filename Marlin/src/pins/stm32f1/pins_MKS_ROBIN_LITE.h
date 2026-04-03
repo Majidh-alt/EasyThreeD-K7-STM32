@@ -120,7 +120,7 @@
 
   #define LCD_PINS_ENABLE            EXP3_08_PIN
 
-  #if ENABLED(MKS_MINI_12864)
+  #if ANY(MKS_MINI_12864, MKS_12864OLED, MKS_12864OLED_SSD1306)
 
     #define LCD_BACKLIGHT_PIN               -1
     #define LCD_RESET_PIN                   -1
@@ -128,6 +128,7 @@
     #define DOGLCD_CS                EXP3_08_PIN
     #define DOGLCD_SCK                      PB13
     #define DOGLCD_MOSI                     PB15
+    #define LCD_PINS_DC              DOGLCD_A0
 
   #else                                           // !MKS_MINI_12864
 
