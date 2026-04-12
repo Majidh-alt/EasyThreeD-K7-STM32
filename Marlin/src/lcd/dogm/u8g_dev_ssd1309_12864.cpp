@@ -125,5 +125,6 @@ uint8_t u8g_dev_ssd1309_128x64_fn(u8g_t *u8g, u8g_dev_t *dev, uint8_t msg, void 
 uint8_t u8g_dev_ssd1309_buf[WIDTH*2] U8G_NOCOMMON ;
 u8g_pb_t u8g_dev_ssd1309_pb = { {8, HEIGHT, 0, 0, 0},  WIDTH, u8g_dev_ssd1309_buf};
 u8g_dev_t u8g_dev_ssd1309_sw_spi = { u8g_dev_ssd1309_128x64_fn, &u8g_dev_ssd1309_pb, U8G_COM_HAL_SW_SPI_FN };
+u8g_dev_t u8g_dev_ssd1309_hw_spi = { u8g_dev_ssd1309_128x64_fn, &u8g_dev_ssd1309_pb, U8G_COM_HAL_HW_SPI_FN };
 
 #endif // HAS_MARLINUI_U8GLIB
