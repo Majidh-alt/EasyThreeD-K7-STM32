@@ -113,19 +113,19 @@
 #if HAS_WIRED_LCD
   #define BEEPER_PIN                 EXP3_01_PIN
   #define BTN_ENC                    EXP3_02_PIN
-  #define LCD_PINS_RS                EXP3_07_PIN
+  #define LCD_PINS_RS                EXP3_08_PIN
 
   #define BTN_EN1                    EXP3_03_PIN
   #define BTN_EN2                    EXP3_05_PIN
 
-  #define LCD_PINS_ENABLE            EXP3_08_PIN
+  #define LCD_PINS_ENABLE            EXP3_07_PIN
 
   #if ANY(MKS_MINI_12864, MKS_12864OLED, MKS_12864OLED_SSD1306, IS_RRD_SC)
 
     #define LCD_BACKLIGHT_PIN               -1
     #define LCD_RESET_PIN                   PA11
     #define DOGLCD_A0                EXP3_06_PIN
-    #define DOGLCD_CS                EXP3_08_PIN
+    #define DOGLCD_CS                EXP3_07_PIN
     #define DOGLCD_SCK                      PB13
     #define DOGLCD_MOSI                     PB15
     #define LCD_PINS_DC              DOGLCD_A0
