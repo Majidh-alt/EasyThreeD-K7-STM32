@@ -120,14 +120,15 @@
 #elif ENABLED(MKS_12864OLED_SSD1306)
 
   // MKS 128x64 (SSD1306) OLED SPI LCD
-  // K2 Plus: Use HW-SPI2 (stock firmware uses hardware SPI2, not SW bit-bang)
+  // K2 Plus: Use SSD1309 HAL class with HW-SPI2 (SSD1309 is protocol-compatible with SSD1306)
+  // Stock firmware uses hardware SPI2, not SW bit-bang
 
   //#define FORCE_SOFT_SPI                                        // SW-SPI (disabled for K2 Plus)
 
   #if ENABLED(ALTERNATIVE_LCD)
     #define U8G_CLASS U8GLIB_SSD1306_128X64_2X                  // 4 stripes
   #else
-    #define U8G_CLASS U8GLIB_SSD1306_128X64                     // 8 stripes
+    #define U8G_CLASS U8GLIB_SSD1309_128X64_HAL                 // HAL HW-SPI (SSD1309 compat with SSD1306)
   #endif
 
 #elif EITHER(FYSETC_242_OLED_12864, K3D_242_OLED_CONTROLLER)
