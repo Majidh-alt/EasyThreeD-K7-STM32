@@ -119,9 +119,10 @@
 
 #elif ENABLED(MKS_12864OLED_SSD1306)
 
-  // MKS 128x64 (SSD1306) OLED I2C LCD
+  // MKS 128x64 (SSD1306) OLED SPI LCD
+  // K2 Plus: Use HW-SPI2 (stock firmware uses hardware SPI2, not SW bit-bang)
 
-  #define FORCE_SOFT_SPI                                        // SW-SPI
+  //#define FORCE_SOFT_SPI                                        // SW-SPI (disabled for K2 Plus)
 
   #if ENABLED(ALTERNATIVE_LCD)
     #define U8G_CLASS U8GLIB_SSD1306_128X64_2X                  // 4 stripes
