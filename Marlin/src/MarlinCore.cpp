@@ -1168,6 +1168,10 @@ void setup() {
   millis_t serial_connect_timeout = millis() + 1000UL;
   while (!MYSERIAL1.connected() && PENDING(millis(), serial_connect_timeout)) { /*nada*/ }
 
+  // K2 Plus OLED raw test — bypasses U8G to test SPI2 + pin mapping
+  extern void k2_oled_test(void);
+  k2_oled_test();
+
   #if HAS_MULTI_SERIAL && !HAS_ETHERNET
     #ifndef BAUDRATE_2
       #define BAUDRATE_2 BAUDRATE
