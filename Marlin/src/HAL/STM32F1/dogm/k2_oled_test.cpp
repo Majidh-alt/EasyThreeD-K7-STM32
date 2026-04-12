@@ -74,7 +74,7 @@ static void oled_spi2_init(void) {
   SPI2->regs->CR1 = SPI_CR1_MSTR    // Master mode
                    | SPI_CR1_SSM     // Software slave management
                    | SPI_CR1_SSI     // Internal slave select HIGH
-                   | SPI_CR1_BR_DIV_16  // 36MHz/16 = 2.25MHz (safe speed)
+                   | SPI_CR1_BR_PCLK_DIV_16  // 36MHz/16 = 2.25MHz (safe speed)
                    ;
   SPI2->regs->CR2 = 0;
   SPI2->regs->CR1 |= SPI_CR1_SPE;   // Enable SPI
