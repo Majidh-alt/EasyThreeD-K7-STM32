@@ -1,329 +1,265 @@
 /**
- * K2 Plus OLED Test — COMBINED (tries both pin mappings)
+ * K2 Plus — GPIO PIN SCANNER
  *
- * This test tries OPTION A first, waits 5 seconds, then tries OPTION B.
- * Also prints status over Serial (115200 baud) so you can see which
- * test is running via USB serial monitor.
+ * Toggles each candidate GPIO pin one at a time.
+ * Connect USB and open serial monitor at 115200 baud.
+ * Watch the display AND listen for the buzzer.
  *
- * OPTION A (Schematic-based):
- *   CS=PC3, DC=PC0, SCK=PB13, MOSI=PB15, RST=none, SW bit-bang SPI
+ * For each pin, the code:
+ *   1. Prints which pin it's toggling
+ *   2. Toggles the pin HIGH/LOW rapidly for 3 seconds
+ *   3. Pauses 2 seconds before next pin
  *
- * OPTION B (Binary analysis):
- *   CS=PC3, DC=PC1, SCK=PB13, MOSI=PB15, RST=PA11, HW SPI2
+ * YOU note down:
+ *   - Which pin makes the buzzer sound
+ *   - Which pin (if any) causes display flicker
  *
- * If you see the checkerboard/white screen during the FIRST 5 seconds,
- * OPTION A is correct. If it appears AFTER the pause, OPTION B is correct.
+ * After the scan, it tries a full SSD1306 init + checkerboard
+ * on every possible pin combination (CS/DC pairs).
  *
- * Replace the existing k2_oled_test.cpp in:
- *   Marlin/src/HAL/STM32F1/dogm/k2_oled_test.cpp
+ * Replace k2_oled_test.cpp with this file.
+ * Called from MarlinCore.cpp setup()
  */
 
 #include "../../inc/MarlinConfig.h"
-#include <SPI.h>
 
-// ==== Pin definitions ====
-// Shared
-#define OLED_CS_PIN    PC3
-#define OLED_SCK_PIN   PB13
-#define OLED_MOSI_PIN  PB15
-
-// Option A specific
-#define OLED_DC_A      PC0   // Schematic: LCD_RS
-
-// Option B specific
-#define OLED_DC_B      PC1   // Binary analysis: DC/A0
-#define OLED_RST_B     PA11  // Binary analysis: RESET
-
-// ==== Software SPI byte send ====
 static inline void pin_high(int pin) { digitalWrite(pin, HIGH); }
 static inline void pin_low(int pin)  { digitalWrite(pin, LOW); }
 
+// All candidate pins on EXP1 + nearby
+struct PinInfo {
+  int pin;
+  const char* name;
+};
+
+static const PinInfo candidates[] = {
+  { PA8,  "PA8  (FAN/IO?)" },
+  { PA11, "PA11 (NRST?)"   },
+  { PA12, "PA12"            },
+  { PA15, "PA15 (SD_CS)"   },
+  { PB0,  "PB0  (Z_STEP)"  },
+  { PB1,  "PB1  (Z_DIR?)"  },
+  { PB3,  "PB3  (BTN_ENC)" },
+  { PB4,  "PB4  (BTN_EN2)" },
+  { PB5,  "PB5  (BTN_EN1)" },
+  { PB6,  "PB6  (I2C_SCL)" },
+  { PB7,  "PB7  (I2C_SDA)" },
+  { PB8,  "PB8  (Filament)"},
+  { PB13, "PB13 (SPI2_SCK)"},
+  { PB15, "PB15 (SPI2_MOSI)"},
+  { PC0,  "PC0  (LCD_RS)"  },
+  { PC1,  "PC1  (LCD_CS)"  },
+  { PC2,  "PC2"             },
+  { PC3,  "PC3"             },
+  { PC4,  "PC4  (E0_STEP)" },
+  { PC5,  "PC5  (Z_DIR)"   },
+  { PC6,  "PC6  (X_STEP)"  },
+  { PC7,  "PC7  (IO1?)"    },
+  { PC8,  "PC8  (HOTBED)"  },
+  { PC9,  "PC9  (HEATER1)" },
+  { PC10, "PC10 (SD_DET?)" },
+  { PC11, "PC11 (SD_MISO)" },
+  { PC12, "PC12 (X-)"      },
+  { PC13, "PC13 (Z-)"      },
+  { PD2,  "PD2  (BEERPER)" },
+};
+
+static const int NUM_CANDIDATES = sizeof(candidates) / sizeof(candidates[0]);
+
+// ---- SW SPI helpers ----
+static int current_sck, current_mosi;
+
 static void sw_spi_byte(uint8_t b) {
   for (int8_t i = 7; i >= 0; i--) {
-    pin_low(OLED_SCK_PIN);
-    if (b & (1 << i)) pin_high(OLED_MOSI_PIN);
-    else               pin_low(OLED_MOSI_PIN);
-    pin_high(OLED_SCK_PIN);
+    pin_low(current_sck);
+    if (b & (1 << i)) pin_high(current_mosi);
+    else               pin_low(current_mosi);
+    pin_high(current_sck);
   }
 }
 
-// ==== SSD1306 init sequence (from stock firmware) ====
-static void ssd1306_init_sw(int dc_pin) {
-  // Helper lambdas for SW SPI
-  auto cmd = [&](uint8_t c) {
-    pin_low(dc_pin);
-    pin_low(OLED_CS_PIN);
-    sw_spi_byte(c);
-    pin_high(OLED_CS_PIN);
-  };
-
-  cmd(0xAE);                     // Display OFF
-  cmd(0xD5); cmd(0x80);          // Clock div
-  cmd(0xA8); cmd(0x3F);          // Mux 64
-  cmd(0xD3); cmd(0x00);          // Offset 0
-  cmd(0x40);                     // Start line 0
-  cmd(0x8D); cmd(0x14);          // Charge pump ON
-  cmd(0x20); cmd(0x00);          // Horiz addr mode
-  cmd(0xA1);                     // Seg remap
-  cmd(0xC8);                     // COM scan dec
-  cmd(0xDA); cmd(0x12);          // COM pins
-  cmd(0x81); cmd(0xCF);          // Contrast
-  cmd(0xD9); cmd(0xF1);          // Pre-charge
-  cmd(0xDB); cmd(0x40);          // VCOMH
-  cmd(0x2E);                     // Stop scroll
-  cmd(0xA4);                     // RAM display
-  cmd(0xA6);                     // Normal
-  cmd(0xAF);                     // Display ON
+static void oled_cmd_sw(int cs, int dc, uint8_t c) {
+  pin_low(dc);
+  pin_low(cs);
+  sw_spi_byte(c);
+  pin_high(cs);
 }
 
-static void draw_checkerboard_sw(int dc_pin) {
-  // Set address window
-  auto cmd = [&](uint8_t c) {
-    pin_low(dc_pin);
-    pin_low(OLED_CS_PIN);
-    sw_spi_byte(c);
-    pin_high(OLED_CS_PIN);
-  };
+static void try_oled_init(int cs, int dc, int sck, int mosi, int rst, const char* label) {
+  current_sck = sck;
+  current_mosi = mosi;
 
-  cmd(0x21); cmd(0); cmd(127);   // Col 0-127
-  cmd(0x22); cmd(0); cmd(7);     // Page 0-7
+  SERIAL_ECHOPGM(">>> Trying: ");
+  SERIAL_ECHOLNPGM(label);
 
-  pin_high(dc_pin);
-  pin_low(OLED_CS_PIN);
+  pinMode(cs,   OUTPUT);
+  pinMode(dc,   OUTPUT);
+  pinMode(sck,  OUTPUT);
+  pinMode(mosi, OUTPUT);
+  pin_high(cs);
+  pin_high(sck);
+
+  if (rst >= 0) {
+    pinMode(rst, OUTPUT);
+    pin_high(rst); delay(10);
+    pin_low(rst);  delay(50);
+    pin_high(rst); delay(100);
+  } else {
+    delay(100);
+  }
+
+  // SSD1306 init
+  oled_cmd_sw(cs, dc, 0xAE);
+  oled_cmd_sw(cs, dc, 0xD5); oled_cmd_sw(cs, dc, 0x80);
+  oled_cmd_sw(cs, dc, 0xA8); oled_cmd_sw(cs, dc, 0x3F);
+  oled_cmd_sw(cs, dc, 0xD3); oled_cmd_sw(cs, dc, 0x00);
+  oled_cmd_sw(cs, dc, 0x40);
+  oled_cmd_sw(cs, dc, 0x8D); oled_cmd_sw(cs, dc, 0x14);
+  oled_cmd_sw(cs, dc, 0x20); oled_cmd_sw(cs, dc, 0x00);
+  oled_cmd_sw(cs, dc, 0xA1);
+  oled_cmd_sw(cs, dc, 0xC8);
+  oled_cmd_sw(cs, dc, 0xDA); oled_cmd_sw(cs, dc, 0x12);
+  oled_cmd_sw(cs, dc, 0x81); oled_cmd_sw(cs, dc, 0xCF);
+  oled_cmd_sw(cs, dc, 0xD9); oled_cmd_sw(cs, dc, 0xF1);
+  oled_cmd_sw(cs, dc, 0xDB); oled_cmd_sw(cs, dc, 0x40);
+  oled_cmd_sw(cs, dc, 0x2E);
+  oled_cmd_sw(cs, dc, 0xA4);
+  oled_cmd_sw(cs, dc, 0xA6);
+  oled_cmd_sw(cs, dc, 0xAF);
+
+  // Draw checkerboard
+  oled_cmd_sw(cs, dc, 0x21); oled_cmd_sw(cs, dc, 0); oled_cmd_sw(cs, dc, 127);
+  oled_cmd_sw(cs, dc, 0x22); oled_cmd_sw(cs, dc, 0); oled_cmd_sw(cs, dc, 7);
+
+  pin_high(dc);
+  pin_low(cs);
   for (uint8_t page = 0; page < 8; page++)
     for (uint8_t col = 0; col < 128; col++)
       sw_spi_byte(((col / 8) + page) & 1 ? 0xFF : 0x00);
-  pin_high(OLED_CS_PIN);
+  pin_high(cs);
+
+  SERIAL_ECHOLNPGM(">>> Pattern sent. Waiting 4 sec...");
+  delay(4000);
+
+  // Turn off
+  oled_cmd_sw(cs, dc, 0xAE);
+  delay(500);
 }
 
-static void draw_white_sw(int dc_pin) {
-  auto cmd = [&](uint8_t c) {
-    pin_low(dc_pin);
-    pin_low(OLED_CS_PIN);
-    sw_spi_byte(c);
-    pin_high(OLED_CS_PIN);
-  };
-
-  cmd(0x21); cmd(0); cmd(127);
-  cmd(0x22); cmd(0); cmd(7);
-
-  pin_high(dc_pin);
-  pin_low(OLED_CS_PIN);
-  for (uint16_t i = 0; i < 1024; i++) sw_spi_byte(0xFF);
-  pin_high(OLED_CS_PIN);
-}
-
-static void display_off_sw(int dc_pin) {
-  pin_low(dc_pin);
-  pin_low(OLED_CS_PIN);
-  sw_spi_byte(0xAE);
-  pin_high(OLED_CS_PIN);
-}
-
-// ==== HW SPI2 version ====
-static SPIClass spi2(2);
-
-static void ssd1306_init_hw(int dc_pin) {
-  auto cmd = [&](uint8_t c) {
-    pin_low(dc_pin);
-    pin_low(OLED_CS_PIN);
-    spi2.transfer(c);
-    pin_high(OLED_CS_PIN);
-  };
-
-  cmd(0xAE);
-  cmd(0xD5); cmd(0x80);
-  cmd(0xA8); cmd(0x3F);
-  cmd(0xD3); cmd(0x00);
-  cmd(0x40);
-  cmd(0x8D); cmd(0x14);
-  cmd(0x20); cmd(0x00);
-  cmd(0xA1);
-  cmd(0xC8);
-  cmd(0xDA); cmd(0x12);
-  cmd(0x81); cmd(0xCF);
-  cmd(0xD9); cmd(0xF1);
-  cmd(0xDB); cmd(0x40);
-  cmd(0x2E);
-  cmd(0xA4);
-  cmd(0xA6);
-  cmd(0xAF);
-}
-
-static void draw_checkerboard_hw(int dc_pin) {
-  auto cmd = [&](uint8_t c) {
-    pin_low(dc_pin);
-    pin_low(OLED_CS_PIN);
-    spi2.transfer(c);
-    pin_high(OLED_CS_PIN);
-  };
-
-  cmd(0x21); cmd(0); cmd(127);
-  cmd(0x22); cmd(0); cmd(7);
-
-  pin_high(dc_pin);
-  pin_low(OLED_CS_PIN);
-  for (uint8_t page = 0; page < 8; page++)
-    for (uint8_t col = 0; col < 128; col++)
-      spi2.transfer(((col / 8) + page) & 1 ? 0xFF : 0x00);
-  pin_high(OLED_CS_PIN);
-}
-
-static void draw_white_hw(int dc_pin) {
-  auto cmd = [&](uint8_t c) {
-    pin_low(dc_pin);
-    pin_low(OLED_CS_PIN);
-    spi2.transfer(c);
-    pin_high(OLED_CS_PIN);
-  };
-
-  cmd(0x21); cmd(0); cmd(127);
-  cmd(0x22); cmd(0); cmd(7);
-
-  pin_high(dc_pin);
-  pin_low(OLED_CS_PIN);
-  for (uint16_t i = 0; i < 1024; i++) spi2.transfer(0xFF);
-  pin_high(OLED_CS_PIN);
-}
-
-static void display_off_hw(int dc_pin) {
-  pin_low(dc_pin);
-  pin_low(OLED_CS_PIN);
-  spi2.transfer(0xAE);
-  pin_high(OLED_CS_PIN);
-}
-
-
-// ============================================================
-// MAIN TEST
 // ============================================================
 extern "C" void k2_oled_test(void) {
 
-  SERIAL_ECHOLNPGM("=== K2 OLED COMBINED TEST ===");
-  SERIAL_ECHOLNPGM("If display works during A test -> Option A is correct");
-  SERIAL_ECHOLNPGM("If display works during B test -> Option B is correct");
-
   // ============================================================
-  // OPTION A: Schematic pins, SW SPI, DC=PC0, no reset
+  // PHASE 1: Toggle each pin individually
   // ============================================================
-  SERIAL_ECHOLNPGM("");
-  SERIAL_ECHOLNPGM(">>> OPTION A: CS=PC3, DC=PC0, SW-SPI PB13/PB15, no RST");
-  SERIAL_ECHOLNPGM(">>> Starting in 1 second...");
-  delay(1000);
-
-  // Configure pins
-  pinMode(OLED_CS_PIN,   OUTPUT);
-  pinMode(OLED_DC_A,     OUTPUT);
-  pinMode(OLED_SCK_PIN,  OUTPUT);
-  pinMode(OLED_MOSI_PIN, OUTPUT);
-  pin_high(OLED_CS_PIN);
-  pin_high(OLED_SCK_PIN);
-  delay(100);
-
-  SERIAL_ECHOLNPGM(">>> A: Sending SSD1306 init...");
-  ssd1306_init_sw(OLED_DC_A);
-
-  SERIAL_ECHOLNPGM(">>> A: Drawing checkerboard...");
-  draw_checkerboard_sw(OLED_DC_A);
-
-  SERIAL_ECHOLNPGM(">>> A: Checkerboard displayed. Waiting 5 sec...");
-  delay(5000);
-
-  SERIAL_ECHOLNPGM(">>> A: Drawing full white...");
-  draw_white_sw(OLED_DC_A);
-
-  SERIAL_ECHOLNPGM(">>> A: White displayed. Waiting 5 sec...");
-  delay(5000);
-
-  // Turn off display before switching
-  display_off_sw(OLED_DC_A);
-  SERIAL_ECHOLNPGM(">>> A: Display OFF. Switching to Option B...");
+  SERIAL_ECHOLNPGM("========================================");
+  SERIAL_ECHOLNPGM("=== K2 PLUS GPIO PIN SCANNER ===");
+  SERIAL_ECHOLNPGM("Watch display + listen for buzzer");
+  SERIAL_ECHOLNPGM("========================================");
   delay(2000);
 
+  for (int i = 0; i < NUM_CANDIDATES; i++) {
+    int p = candidates[i].pin;
+    const char* name = candidates[i].name;
+
+    SERIAL_ECHOPGM("Toggling: ");
+    SERIAL_ECHOLNPGM(name);
+
+    pinMode(p, OUTPUT);
+
+    // Toggle rapidly for 3 seconds
+    unsigned long start = millis();
+    while (millis() - start < 3000) {
+      pin_high(p);
+      delay(50);
+      pin_low(p);
+      delay(50);
+    }
+
+    // Leave pin low
+    pin_low(p);
+
+    SERIAL_ECHOPGM("  Done: ");
+    SERIAL_ECHOLNPGM(name);
+    SERIAL_ECHOLNPGM("  --- pause 2s ---");
+    delay(2000);
+  }
+
+  SERIAL_ECHOLNPGM("");
+  SERIAL_ECHOLNPGM("========================================");
+  SERIAL_ECHOLNPGM("=== PHASE 1 COMPLETE ===");
+  SERIAL_ECHOLNPGM("Note which pins caused buzzer/flicker");
+  SERIAL_ECHOLNPGM("========================================");
+  delay(3000);
+
   // ============================================================
-  // OPTION B: Binary analysis pins, HW SPI2, DC=PC1, RST=PA11
+  // PHASE 2: Try OLED init with most likely pin combos
+  // Based on row-reversal cable theory:
+  //   CS=PD2, DC=PC3, SCK=PB5, MOSI=NRST? (can't use NRST)
+  // Based on binary analysis:
+  //   CS=PC3, DC=PC1, SCK=PB13, MOSI=PB15
+  // Other combos mixing the two
   // ============================================================
   SERIAL_ECHOLNPGM("");
-  SERIAL_ECHOLNPGM(">>> OPTION B: CS=PC3, DC=PC1, HW-SPI2, RST=PA11");
-  SERIAL_ECHOLNPGM(">>> Starting in 1 second...");
-  delay(1000);
+  SERIAL_ECHOLNPGM("========================================");
+  SERIAL_ECHOLNPGM("=== PHASE 2: OLED INIT ATTEMPTS ===");
+  SERIAL_ECHOLNPGM("========================================");
+  delay(2000);
 
-  // Configure pins
-  pinMode(OLED_DC_B,    OUTPUT);
-  pinMode(OLED_RST_B,   OUTPUT);
-  pin_high(OLED_CS_PIN);
+  // Attempt 1: Binary analysis original
+  try_oled_init(PC3, PC1, PB13, PB15, PA11,
+    "A1: CS=PC3 DC=PC1 SCK=PB13 MOSI=PB15 RST=PA11");
 
-  // Hardware reset
-  SERIAL_ECHOLNPGM(">>> B: Hardware reset via PA11...");
-  pin_high(OLED_RST_B);
-  delay(10);
-  pin_low(OLED_RST_B);
-  delay(50);
-  pin_high(OLED_RST_B);
-  delay(100);
+  // Attempt 2: Binary analysis, no reset
+  try_oled_init(PC3, PC1, PB13, PB15, -1,
+    "A2: CS=PC3 DC=PC1 SCK=PB13 MOSI=PB15 RST=none");
 
-  // Init HW SPI2
-  spi2.begin();
-  spi2.setBitOrder(MSBFIRST);
-  spi2.setDataMode(SPI_MODE0);
-  spi2.setClockDivider(SPI_CLOCK_DIV4);
+  // Attempt 3: Schematic-based
+  try_oled_init(PC3, PC0, PB13, PB15, -1,
+    "A3: CS=PC3 DC=PC0 SCK=PB13 MOSI=PB15 RST=none");
 
-  SERIAL_ECHOLNPGM(">>> B: Sending SSD1306 init...");
-  ssd1306_init_hw(OLED_DC_B);
+  // Attempt 4: Row-reversal theory (CS=PD2, DC=PC3)
+  try_oled_init(PD2, PC3, PB5, PC1, -1,
+    "A4: CS=PD2 DC=PC3 SCK=PB5 MOSI=PC1 RST=none");
 
-  SERIAL_ECHOLNPGM(">>> B: Drawing checkerboard...");
-  draw_checkerboard_hw(OLED_DC_B);
+  // Attempt 5: Row-reversal with PA11 as reset
+  try_oled_init(PD2, PC3, PB5, PC1, PA11,
+    "A5: CS=PD2 DC=PC3 SCK=PB5 MOSI=PC1 RST=PA11");
 
-  SERIAL_ECHOLNPGM(">>> B: Checkerboard displayed. Waiting 5 sec...");
-  delay(5000);
+  // Attempt 6: Maybe CS and DC are swapped from binary
+  try_oled_init(PC1, PC3, PB13, PB15, PA11,
+    "A6: CS=PC1 DC=PC3 SCK=PB13 MOSI=PB15 RST=PA11");
 
-  SERIAL_ECHOLNPGM(">>> B: Drawing full white...");
-  draw_white_hw(OLED_DC_B);
+  // Attempt 7: PC0 as CS, PC3 as DC
+  try_oled_init(PC0, PC3, PB13, PB15, PA11,
+    "A7: CS=PC0 DC=PC3 SCK=PB13 MOSI=PB15 RST=PA11");
 
-  SERIAL_ECHOLNPGM(">>> B: White displayed. Waiting 5 sec...");
-  delay(5000);
+  // Attempt 8: Full row-reversal with PB3/PB4 as SPI
+  try_oled_init(PD2, PC3, PB3, PB4, -1,
+    "A8: CS=PD2 DC=PC3 SCK=PB3 MOSI=PB4 RST=none");
 
-  // ============================================================
-  // OPTION C: Hybrid — SW SPI with DC=PC1, RST=PA11
-  // (in case HW SPI2 init is the problem, not the pins)
-  // ============================================================
-  display_off_hw(OLED_DC_B);
+  // Attempt 9: IO1 might be PC7
+  try_oled_init(PC7, PC3, PB5, PC1, -1,
+    "A9: CS=PC7 DC=PC3 SCK=PB5 MOSI=PC1 RST=none");
+
+  // Attempt 10: Using PD2 for CS, PC0 for DC
+  try_oled_init(PD2, PC0, PB13, PB15, PA11,
+    "A10: CS=PD2 DC=PC0 SCK=PB13 MOSI=PB15 RST=PA11");
+
+  // Attempt 11: PA8 might be IO1 for CS
+  try_oled_init(PA8, PC3, PB5, PC1, -1,
+    "A11: CS=PA8 DC=PC3 SCK=PB5 MOSI=PC1 RST=none");
+
+  // Attempt 12: PC0/PC1 as SPI data, PC3 as DC, PD2 as CS
+  try_oled_init(PD2, PC3, PC0, PC1, -1,
+    "A12: CS=PD2 DC=PC3 SCK=PC0 MOSI=PC1 RST=none");
+
   SERIAL_ECHOLNPGM("");
-  SERIAL_ECHOLNPGM(">>> OPTION C: CS=PC3, DC=PC1, SW-SPI PB13/PB15, RST=PA11");
-  delay(1000);
+  SERIAL_ECHOLNPGM("========================================");
+  SERIAL_ECHOLNPGM("=== ALL TESTS COMPLETE ===");
+  SERIAL_ECHOLNPGM("Report which attempt showed a pattern!");
+  SERIAL_ECHOLNPGM("========================================");
 
-  // Reconfigure PB13/PB15 as GPIO (undo SPI2 AF)
-  spi2.end();
-  pinMode(OLED_SCK_PIN,  OUTPUT);
-  pinMode(OLED_MOSI_PIN, OUTPUT);
-  pin_high(OLED_SCK_PIN);
-
-  // Reset again
-  pin_high(OLED_RST_B);
-  delay(10);
-  pin_low(OLED_RST_B);
-  delay(50);
-  pin_high(OLED_RST_B);
-  delay(100);
-
-  SERIAL_ECHOLNPGM(">>> C: Sending SSD1306 init...");
-  ssd1306_init_sw(OLED_DC_B);   // Same init, but with DC=PC1
-
-  SERIAL_ECHOLNPGM(">>> C: Drawing checkerboard...");
-  draw_checkerboard_sw(OLED_DC_B);
-
-  SERIAL_ECHOLNPGM(">>> C: Checkerboard displayed. Waiting 5 sec...");
-  delay(5000);
-
-  SERIAL_ECHOLNPGM(">>> C: Drawing full white...");
-  draw_white_sw(OLED_DC_B);
-
-  SERIAL_ECHOLNPGM(">>> C: White displayed. Waiting 30 sec...");
-  delay(30000);
-
-  SERIAL_ECHOLNPGM("=== TEST COMPLETE ===");
-  SERIAL_ECHOLNPGM("If you saw the pattern during A -> Use PC0 for DC");
-  SERIAL_ECHOLNPGM("If you saw the pattern during B -> Use PC1+PA11+HW-SPI2");
-  SERIAL_ECHOLNPGM("If you saw the pattern during C -> Use PC1+PA11+SW-SPI");
-  SERIAL_ECHOLNPGM("If nothing appeared -> Pin mapping is still wrong");
+  // Hang
+  while(1) delay(1000);
 }
