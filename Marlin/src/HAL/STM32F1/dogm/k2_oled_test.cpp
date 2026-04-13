@@ -1,9 +1,11 @@
 /**
- * K2 Plus — GPIO PIN SCANNER v3
- * - Waits 10 seconds for USB serial to initialize
- * - Each pin gets a unique beep count (1 beep, 2 beeps, 3 beeps...)
- * - Long pause between pins so you can count
- * - Then tries OLED init combos
+ * K2 Plus — GPIO PIN SCANNER v4
+ *
+ * FIXES:
+ * - Immediately sets PD2 (buzzer) LOW to stop beeping
+ * - Waits for USB serial properly
+ * - Unique beep count per pin
+ * - Then tries OLED combos
  *
  * Replace k2_oled_test.cpp with this file.
  */
@@ -18,6 +20,8 @@ struct PinInfo {
   const char* name;
 };
 
+// Pins to test - EXCLUDES PD2 (buzzer) from toggle test
+// to avoid constant beeping during scan
 static const PinInfo candidates[] = {
   { PA8,  "PA8"  },   // 1 beep
   { PA11, "PA11" },   // 2 beeps
@@ -32,12 +36,10 @@ static const PinInfo candidates[] = {
   { PC2,  "PC2"  },   // 11 beeps
   { PC3,  "PC3"  },   // 12 beeps
   { PC7,  "PC7"  },   // 13 beeps
-  { PD2,  "PD2"  },   // 14 beeps
 };
 
 static const int NUM_CANDIDATES = sizeof(candidates) / sizeof(candidates[0]);
 
-// SW SPI helpers
 static int current_sck, current_mosi;
 
 static void sw_spi_byte(uint8_t b) {
@@ -110,8 +112,9 @@ static void try_oled(int cs, int dc, int sck, int mosi, int rst, int num) {
       sw_spi_byte(((col / 8) + page) & 1 ? 0xFF : 0x00);
   pin_high(cs);
 
-  // Full white after 3 sec
   delay(3000);
+
+  // Full white
   oled_cmd_sw(cs, dc, 0x21); oled_cmd_sw(cs, dc, 0); oled_cmd_sw(cs, dc, 127);
   oled_cmd_sw(cs, dc, 0x22); oled_cmd_sw(cs, dc, 0); oled_cmd_sw(cs, dc, 7);
   pin_high(dc);
@@ -128,103 +131,153 @@ static void try_oled(int cs, int dc, int sck, int mosi, int rst, int num) {
   MYSERIAL1.println(" done");
 }
 
+// Use PD2 buzzer to beep N times (as feedback since we control it)
+static void buzzer_beep(int count) {
+  for (int i = 0; i < count; i++) {
+    pin_high(PD2);
+    delay(100);
+    pin_low(PD2);
+    delay(100);
+  }
+}
+
 extern "C" void k2_oled_test(void) {
 
-  // ======================================================
-  // Wait 10 seconds for USB serial to fully initialize
-  // ======================================================
-  delay(10000);
+  // =============================================
+  // IMMEDIATELY silence the buzzer
+  // =============================================
+  pinMode(PD2, OUTPUT);
+  pin_low(PD2);
 
-  MYSERIAL1.begin(115200);
-  delay(1000);
+  // Also set all EXP1 signal pins to safe defaults
+  pinMode(PC0, OUTPUT); pin_low(PC0);
+  pinMode(PC1, OUTPUT); pin_low(PC1);
+  pinMode(PC2, OUTPUT); pin_low(PC2);
+  pinMode(PC3, OUTPUT); pin_low(PC3);
+
+  // =============================================
+  // Wait for USB serial to initialize
+  // =============================================
+  delay(5000);
+
+  // Signal we're alive: 3 short beeps
+  buzzer_beep(3);
+
+  delay(5000);
 
   MYSERIAL1.println("==========================");
-  MYSERIAL1.println("K2 GPIO SCANNER v3");
+  MYSERIAL1.println("K2 GPIO SCANNER v4");
   MYSERIAL1.println("==========================");
+  MYSERIAL1.println("Buzzer silenced OK");
+  MYSERIAL1.println("Starting Phase 1...");
 
-  // ======================================================
-  // PHASE 1: Toggle each pin with unique beep count
-  // Pin 1 = 1 pulse, Pin 2 = 2 pulses, etc.
-  // Each pulse: 200ms ON, 200ms OFF
-  // 3 second pause between pins
-  // ======================================================
-  MYSERIAL1.println("PHASE 1: PIN TOGGLE");
-  MYSERIAL1.println("Count the beeps!");
-  delay(2000);
+  // Signal Phase 1 start: 1 long beep
+  pin_high(PD2); delay(500); pin_low(PD2); delay(1000);
 
+  // =============================================
+  // PHASE 1: Toggle each pin with unique count
+  // Listen for buzzer — if a pin triggers sound
+  // on the display board, count the beeps
+  // =============================================
   for (int i = 0; i < NUM_CANDIDATES; i++) {
     int p = candidates[i].pin;
     int beep_count = i + 1;
 
     MYSERIAL1.print("Pin ");
     MYSERIAL1.print(beep_count);
-    MYSERIAL1.print(": ");
+    MYSERIAL1.print("/13: ");
     MYSERIAL1.println(candidates[i].name);
 
     pinMode(p, OUTPUT);
 
-    // Send beep_count pulses
+    // Send beep_count short pulses
     for (int b = 0; b < beep_count; b++) {
       pin_high(p);
-      delay(200);
+      delay(150);
       pin_low(p);
-      delay(200);
+      delay(150);
     }
 
-    // 3 second silence before next pin
+    pin_low(p);
+
+    // 3 second silence
     delay(3000);
   }
 
   MYSERIAL1.println("PHASE 1 DONE");
-  MYSERIAL1.println("==========================");
-  delay(3000);
 
-  // ======================================================
-  // PHASE 2: Try OLED init with different pin combos
-  // Watch display for checkerboard/white pattern
-  // ======================================================
+  // Signal Phase 2: 2 long beeps via PD2
+  pin_high(PD2); delay(500); pin_low(PD2); delay(300);
+  pin_high(PD2); delay(500); pin_low(PD2); delay(2000);
+
+  // =============================================
+  // PHASE 2: OLED init attempts
+  // Row-reversal mapping theory:
+  //   Odd pins:  mobo 1<->13, 3<->11, 5<->9, 7=7
+  //   Even pins: mobo 2<->14, 4<->12, 6<->10, 8=8
+  //
+  // So OLED signals map to:
+  //   Display CS (pin1)   -> Mobo pin13 (IO1)
+  //   Display DC (pin13)  -> Mobo pin1  (PC3)
+  //   Display SCLK(pin7)  -> Mobo pin7  (PC1)
+  //   Display MOSI(pin11) -> Mobo pin3  (PC2)
+  //   Display GND (pin3)  -> Mobo pin11 (GND) ✓
+  //   Display VCC (pin4)  -> Mobo pin12 (3V3) ✓
+  //   Display VCC (pin2)  -> Mobo pin14 (PD2/buzzer)
+  //
+  // If IO1 is not MCU-controllable, CS may be
+  // active-low via pull-down, or we find the MCU pin.
+  // =============================================
   MYSERIAL1.println("PHASE 2: OLED ATTEMPTS");
-  delay(2000);
+  delay(1000);
 
-  // A1: Binary analysis original
+  // A1: Binary analysis (original assumption)
   try_oled(PC3, PC1, PB13, PB15, PA11, 1);
 
-  // A2: Binary analysis no reset
-  try_oled(PC3, PC1, PB13, PB15, -1, 2);
+  // A2: Row-reversal: DC=PC3, SCLK=PC1, MOSI=PC2, CS=PC0 (guess)
+  try_oled(PC0, PC3, PC1, PC2, -1, 2);
 
-  // A3: Schematic DC=PC0
-  try_oled(PC3, PC0, PB13, PB15, -1, 3);
+  // A3: Row-reversal: DC=PC3, SCLK=PC1, MOSI=PC2, CS=PA11
+  try_oled(PA11, PC3, PC1, PC2, -1, 3);
 
-  // A4: Row-reversal: CS=PD2, DC=PC3, SCK=PB5, MOSI=PC1
-  try_oled(PD2, PC3, PB5, PC1, -1, 4);
+  // A4: Row-reversal: DC=PC3, SCLK=PC1, MOSI=PC2, CS=PA8
+  try_oled(PA8, PC3, PC1, PC2, -1, 4);
 
-  // A5: Row-reversal + reset
-  try_oled(PD2, PC3, PB5, PC1, PA11, 5);
+  // A5: Row-reversal: DC=PC3, SCLK=PC1, MOSI=PC2, CS=PC7
+  try_oled(PC7, PC3, PC1, PC2, -1, 5);
 
-  // A6: Swapped CS/DC from binary
-  try_oled(PC1, PC3, PB13, PB15, PA11, 6);
+  // A6: Row-reversal with CS tied low (always selected)
+  // Just ground CS and see if DC/SCK/MOSI alone work
+  // We'll use a pin set permanently LOW as CS
+  pinMode(PA12, OUTPUT); pin_low(PA12);
+  try_oled(PA12, PC3, PC1, PC2, -1, 6);
 
-  // A7: CS=PC0, DC=PC3
-  try_oled(PC0, PC3, PB13, PB15, PA11, 7);
+  // A7: Schematic direct: CS=PC3, DC=PC0, SCK=PB13, MOSI=PB15
+  try_oled(PC3, PC0, PB13, PB15, -1, 7);
 
-  // A8: Row-reversal alt SCK/MOSI
-  try_oled(PD2, PC3, PB3, PB4, -1, 8);
+  // A8: Schematic: CS=PC1, DC=PC0, SCK=PB13, MOSI=PB15
+  try_oled(PC1, PC0, PB13, PB15, -1, 8);
 
-  // A9: CS=PC7
-  try_oled(PC7, PC3, PB5, PC1, -1, 9);
+  // A9: DC=PC3, SCK=PC0, MOSI=PC1, CS=PC2
+  try_oled(PC2, PC3, PC0, PC1, -1, 9);
 
-  // A10: CS=PD2, DC=PC0
-  try_oled(PD2, PC0, PB13, PB15, PA11, 10);
+  // A10: Binary + swap CS/DC: CS=PC1, DC=PC3, SCK=PB13, MOSI=PB15
+  try_oled(PC1, PC3, PB13, PB15, PA11, 10);
 
-  // A11: CS=PA8
-  try_oled(PA8, PC3, PB5, PC1, -1, 11);
+  // A11: CS=PD2, DC=PC3, SCK=PC1, MOSI=PC2
+  // (PD2 reaches display board — maybe it's actually CS not buzzer?)
+  try_oled(PD2, PC3, PC1, PC2, -1, 11);
 
-  // A12: SCK=PC0, MOSI=PC1, CS=PD2, DC=PC3
-  try_oled(PD2, PC3, PC0, PC1, -1, 12);
+  // A12: CS=PD2, DC=PC3, SCK=PC1, MOSI=PC2, RST=PA11
+  try_oled(PD2, PC3, PC1, PC2, PA11, 12);
 
   MYSERIAL1.println("==========================");
   MYSERIAL1.println("ALL TESTS COMPLETE");
   MYSERIAL1.println("==========================");
+
+  // 5 beeps to signal completion
+  delay(1000);
+  buzzer_beep(5);
 
   while(1) delay(1000);
 }
