@@ -1,10 +1,14 @@
 /**
- * K2 Plus — GPIO PIN SCANNER (FIXED BUILD)
+ * K2 Plus — GPIO PIN SCANNER v3
+ * - Waits 10 seconds for USB serial to initialize
+ * - Each pin gets a unique beep count (1 beep, 2 beeps, 3 beeps...)
+ * - Long pause between pins so you can count
+ * - Then tries OLED init combos
+ *
  * Replace k2_oled_test.cpp with this file.
  */
 
 #include "../../inc/MarlinConfig.h"
-#include <SPI.h>
 
 static inline void pin_high(int pin) { digitalWrite(pin, HIGH); }
 static inline void pin_low(int pin)  { digitalWrite(pin, LOW); }
@@ -15,27 +19,25 @@ struct PinInfo {
 };
 
 static const PinInfo candidates[] = {
-  { PA8,  "PA8" },
-  { PA11, "PA11" },
-  { PA12, "PA12" },
-  { PB3,  "PB3" },
-  { PB4,  "PB4" },
-  { PB5,  "PB5" },
-  { PB6,  "PB6" },
-  { PB7,  "PB7" },
-  { PB8,  "PB8" },
-  { PB13, "PB13" },
-  { PB15, "PB15" },
-  { PC0,  "PC0" },
-  { PC1,  "PC1" },
-  { PC2,  "PC2" },
-  { PC3,  "PC3" },
-  { PC7,  "PC7" },
-  { PD2,  "PD2" },
+  { PA8,  "PA8"  },   // 1 beep
+  { PA11, "PA11" },   // 2 beeps
+  { PA12, "PA12" },   // 3 beeps
+  { PB3,  "PB3"  },   // 4 beeps
+  { PB4,  "PB4"  },   // 5 beeps
+  { PB5,  "PB5"  },   // 6 beeps
+  { PB13, "PB13" },   // 7 beeps
+  { PB15, "PB15" },   // 8 beeps
+  { PC0,  "PC0"  },   // 9 beeps
+  { PC1,  "PC1"  },   // 10 beeps
+  { PC2,  "PC2"  },   // 11 beeps
+  { PC3,  "PC3"  },   // 12 beeps
+  { PC7,  "PC7"  },   // 13 beeps
+  { PD2,  "PD2"  },   // 14 beeps
 };
 
 static const int NUM_CANDIDATES = sizeof(candidates) / sizeof(candidates[0]);
 
+// SW SPI helpers
 static int current_sck, current_mosi;
 
 static void sw_spi_byte(uint8_t b) {
@@ -54,25 +56,13 @@ static void oled_cmd_sw(int cs, int dc, uint8_t c) {
   pin_high(cs);
 }
 
-static void try_oled_init(int cs, int dc, int sck, int mosi, int rst,
-                          const char* cs_name, const char* dc_name,
-                          const char* sck_name, const char* mosi_name,
-                          const char* rst_name, int attempt_num) {
+static void try_oled(int cs, int dc, int sck, int mosi, int rst, int num) {
   current_sck = sck;
   current_mosi = mosi;
 
-  MYSERIAL1.print(">>> Attempt A");
-  MYSERIAL1.print(attempt_num);
-  MYSERIAL1.print(": CS=");
-  MYSERIAL1.print(cs_name);
-  MYSERIAL1.print(" DC=");
-  MYSERIAL1.print(dc_name);
-  MYSERIAL1.print(" SCK=");
-  MYSERIAL1.print(sck_name);
-  MYSERIAL1.print(" MOSI=");
-  MYSERIAL1.print(mosi_name);
-  MYSERIAL1.print(" RST=");
-  MYSERIAL1.println(rst_name);
+  MYSERIAL1.print("A");
+  MYSERIAL1.print(num);
+  MYSERIAL1.println(" start");
 
   pinMode(cs,   OUTPUT);
   pinMode(dc,   OUTPUT);
@@ -90,6 +80,7 @@ static void try_oled_init(int cs, int dc, int sck, int mosi, int rst,
     delay(100);
   }
 
+  // SSD1306 init
   oled_cmd_sw(cs, dc, 0xAE);
   oled_cmd_sw(cs, dc, 0xD5); oled_cmd_sw(cs, dc, 0x80);
   oled_cmd_sw(cs, dc, 0xA8); oled_cmd_sw(cs, dc, 0x3F);
@@ -108,6 +99,7 @@ static void try_oled_init(int cs, int dc, int sck, int mosi, int rst,
   oled_cmd_sw(cs, dc, 0xA6);
   oled_cmd_sw(cs, dc, 0xAF);
 
+  // Checkerboard
   oled_cmd_sw(cs, dc, 0x21); oled_cmd_sw(cs, dc, 0); oled_cmd_sw(cs, dc, 127);
   oled_cmd_sw(cs, dc, 0x22); oled_cmd_sw(cs, dc, 0); oled_cmd_sw(cs, dc, 7);
 
@@ -118,63 +110,121 @@ static void try_oled_init(int cs, int dc, int sck, int mosi, int rst,
       sw_spi_byte(((col / 8) + page) & 1 ? 0xFF : 0x00);
   pin_high(cs);
 
-  MYSERIAL1.println(">>> Pattern sent. Waiting 4 sec...");
-  delay(4000);
+  // Full white after 3 sec
+  delay(3000);
+  oled_cmd_sw(cs, dc, 0x21); oled_cmd_sw(cs, dc, 0); oled_cmd_sw(cs, dc, 127);
+  oled_cmd_sw(cs, dc, 0x22); oled_cmd_sw(cs, dc, 0); oled_cmd_sw(cs, dc, 7);
+  pin_high(dc);
+  pin_low(cs);
+  for (uint16_t i = 0; i < 1024; i++) sw_spi_byte(0xFF);
+  pin_high(cs);
 
+  delay(3000);
   oled_cmd_sw(cs, dc, 0xAE);
   delay(500);
+
+  MYSERIAL1.print("A");
+  MYSERIAL1.print(num);
+  MYSERIAL1.println(" done");
 }
 
 extern "C" void k2_oled_test(void) {
 
-  MYSERIAL1.println("========================================");
-  MYSERIAL1.println("=== K2 PLUS GPIO PIN SCANNER ===");
-  MYSERIAL1.println("========================================");
+  // ======================================================
+  // Wait 10 seconds for USB serial to fully initialize
+  // ======================================================
+  delay(10000);
+
+  MYSERIAL1.begin(115200);
+  delay(1000);
+
+  MYSERIAL1.println("==========================");
+  MYSERIAL1.println("K2 GPIO SCANNER v3");
+  MYSERIAL1.println("==========================");
+
+  // ======================================================
+  // PHASE 1: Toggle each pin with unique beep count
+  // Pin 1 = 1 pulse, Pin 2 = 2 pulses, etc.
+  // Each pulse: 200ms ON, 200ms OFF
+  // 3 second pause between pins
+  // ======================================================
+  MYSERIAL1.println("PHASE 1: PIN TOGGLE");
+  MYSERIAL1.println("Count the beeps!");
   delay(2000);
 
-  // PHASE 1: Toggle each pin
   for (int i = 0; i < NUM_CANDIDATES; i++) {
     int p = candidates[i].pin;
+    int beep_count = i + 1;
 
-    MYSERIAL1.print("Toggling: ");
+    MYSERIAL1.print("Pin ");
+    MYSERIAL1.print(beep_count);
+    MYSERIAL1.print(": ");
     MYSERIAL1.println(candidates[i].name);
 
     pinMode(p, OUTPUT);
-    unsigned long start = millis();
-    while (millis() - start < 3000) {
-      pin_high(p);
-      delay(50);
-      pin_low(p);
-      delay(50);
-    }
-    pin_low(p);
 
-    MYSERIAL1.print("  Done: ");
-    MYSERIAL1.println(candidates[i].name);
-    delay(2000);
+    // Send beep_count pulses
+    for (int b = 0; b < beep_count; b++) {
+      pin_high(p);
+      delay(200);
+      pin_low(p);
+      delay(200);
+    }
+
+    // 3 second silence before next pin
+    delay(3000);
   }
 
-  MYSERIAL1.println("=== PHASE 1 COMPLETE ===");
+  MYSERIAL1.println("PHASE 1 DONE");
+  MYSERIAL1.println("==========================");
   delay(3000);
 
-  // PHASE 2: Try OLED init combos
-  MYSERIAL1.println("=== PHASE 2: OLED INIT ATTEMPTS ===");
+  // ======================================================
+  // PHASE 2: Try OLED init with different pin combos
+  // Watch display for checkerboard/white pattern
+  // ======================================================
+  MYSERIAL1.println("PHASE 2: OLED ATTEMPTS");
   delay(2000);
 
-  try_oled_init(PC3, PC1, PB13, PB15, PA11,  "PC3","PC1","PB13","PB15","PA11", 1);
-  try_oled_init(PC3, PC1, PB13, PB15, -1,    "PC3","PC1","PB13","PB15","none", 2);
-  try_oled_init(PC3, PC0, PB13, PB15, -1,    "PC3","PC0","PB13","PB15","none", 3);
-  try_oled_init(PD2, PC3, PB5,  PC1,  -1,    "PD2","PC3","PB5","PC1","none",   4);
-  try_oled_init(PD2, PC3, PB5,  PC1,  PA11,  "PD2","PC3","PB5","PC1","PA11",   5);
-  try_oled_init(PC1, PC3, PB13, PB15, PA11,  "PC1","PC3","PB13","PB15","PA11", 6);
-  try_oled_init(PC0, PC3, PB13, PB15, PA11,  "PC0","PC3","PB13","PB15","PA11", 7);
-  try_oled_init(PD2, PC3, PB3,  PB4,  -1,    "PD2","PC3","PB3","PB4","none",   8);
-  try_oled_init(PC7, PC3, PB5,  PC1,  -1,    "PC7","PC3","PB5","PC1","none",   9);
-  try_oled_init(PD2, PC0, PB13, PB15, PA11,  "PD2","PC0","PB13","PB15","PA11", 10);
-  try_oled_init(PA8, PC3, PB5,  PC1,  -1,    "PA8","PC3","PB5","PC1","none",   11);
-  try_oled_init(PD2, PC3, PC0,  PC1,  -1,    "PD2","PC3","PC0","PC1","none",   12);
+  // A1: Binary analysis original
+  try_oled(PC3, PC1, PB13, PB15, PA11, 1);
 
-  MYSERIAL1.println("=== ALL TESTS COMPLETE ===");
+  // A2: Binary analysis no reset
+  try_oled(PC3, PC1, PB13, PB15, -1, 2);
+
+  // A3: Schematic DC=PC0
+  try_oled(PC3, PC0, PB13, PB15, -1, 3);
+
+  // A4: Row-reversal: CS=PD2, DC=PC3, SCK=PB5, MOSI=PC1
+  try_oled(PD2, PC3, PB5, PC1, -1, 4);
+
+  // A5: Row-reversal + reset
+  try_oled(PD2, PC3, PB5, PC1, PA11, 5);
+
+  // A6: Swapped CS/DC from binary
+  try_oled(PC1, PC3, PB13, PB15, PA11, 6);
+
+  // A7: CS=PC0, DC=PC3
+  try_oled(PC0, PC3, PB13, PB15, PA11, 7);
+
+  // A8: Row-reversal alt SCK/MOSI
+  try_oled(PD2, PC3, PB3, PB4, -1, 8);
+
+  // A9: CS=PC7
+  try_oled(PC7, PC3, PB5, PC1, -1, 9);
+
+  // A10: CS=PD2, DC=PC0
+  try_oled(PD2, PC0, PB13, PB15, PA11, 10);
+
+  // A11: CS=PA8
+  try_oled(PA8, PC3, PB5, PC1, -1, 11);
+
+  // A12: SCK=PC0, MOSI=PC1, CS=PD2, DC=PC3
+  try_oled(PD2, PC3, PC0, PC1, -1, 12);
+
+  MYSERIAL1.println("==========================");
+  MYSERIAL1.println("ALL TESTS COMPLETE");
+  MYSERIAL1.println("==========================");
 
   while(1) delay(1000);
 }
