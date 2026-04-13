@@ -1137,8 +1137,7 @@ inline void tmc_standby_setup() {
  *  - Open Touch Screen Calibration screen, if not calibrated
  *  - Set Marlin to RUNNING State
  */
-void setup() {extern void k2_oled_test(void);
-  k2_oled_test();
+
   #ifdef FASTIO_INIT
     FASTIO_INIT();
   #endif
