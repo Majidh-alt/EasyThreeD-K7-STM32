@@ -1171,8 +1171,6 @@ void setup() {
   // One-time EEPROM wipe for stock firmware compatibility
   // REMOVE THIS AFTER WIPING — only needed once!
   #if ENABLED(I2C_EEPROM)
-    extern void k2_eeprom_wipe(void);
-    k2_eeprom_wipe();
     SERIAL_ECHOLNPGM("EEPROM WIPED TO 0xFF");
   #endif
 
